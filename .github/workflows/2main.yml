@@ -19,4 +19,4 @@ jobs:
           base_uri: https://eu.ast.checkmarx.net/
           cx_client_id: ${{ secrets.CXCLIENT_ID }}
           cx_client_secret: ${{ secrets.CXCLIENT_SECRET }}
-          
+        
