@@ -200,6 +200,73 @@ public class JWTVotesEndpointTest extends LessonTest {
         .andExpect(status().isUnauthorized());
   }
 
+  // --- Security regression tests for CWE-287 improper authentication (substring bypass) ---
+
+  /**
+   * A substring of a valid username (e.g. "T" is a substring of "TomJerrySylvester") must NOT
+   * be accepted as a valid user. The fix replaces the plain-string contains() check with a
+   * Set-based exact membership check.
+   */
+  @Test
+  public void substringOfValidUsernameShouldNotGetAToken() throws Exception {
+    // "T" is a substring of the old "TomJerrySylvester" string but is not a valid username
+    mockMvc
+        .perform(
+            MockMvcRequestBuilders.get("/JWT/votings/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .param("user", "T"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(cookie().value("access_token", ""));
+  }
+
+  @Test
+  public void multipleValidUsernamesConcatenatedShouldNotGetAToken() throws Exception {
+    // "TomJerry" spans two valid names but is not itself a valid username
+    mockMvc
+        .perform(
+            MockMvcRequestBuilders.get("/JWT/votings/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .param("user", "TomJerry"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(cookie().value("access_token", ""));
+  }
+
+  @Test
+  public void arbitrarySubstringShouldNotGetAToken() throws Exception {
+    // "errySylv" is a substring present in the old concatenated string
+    mockMvc
+        .perform(
+            MockMvcRequestBuilders.get("/JWT/votings/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .param("user", "errySylv"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(cookie().value("access_token", ""));
+  }
+
+  @Test
+  public void jerryShouldGetAToken() throws Exception {
+    // "Jerry" is a valid user and must still be accepted
+    mockMvc
+        .perform(
+            MockMvcRequestBuilders.get("/JWT/votings/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .param("user", "Jerry"))
+        .andExpect(status().isOk())
+        .andExpect(cookie().value("access_token", containsString("eyJhbGciOiJIUzUxMiJ9.")));
+  }
+
+  @Test
+  public void sylvesterShouldGetAToken() throws Exception {
+    // "Sylvester" is a valid user and must still be accepted
+    mockMvc
+        .perform(
+            MockMvcRequestBuilders.get("/JWT/votings/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .param("user", "Sylvester"))
+        .andExpect(status().isOk())
+        .andExpect(cookie().value("access_token", containsString("eyJhbGciOiJIUzUxMiJ9.")));
+  }
+
   @Test
   public void unknownUserWithValidTokenShouldNotBeAbleToVote() throws Exception {
     Claims claims = Jwts.claims();
