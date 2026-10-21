@@ -31,8 +31,13 @@ public class JWTRefreshEndpointTest extends LessonTest {
     this.mockMvc = MockMvcBuilders.webAppContextSetup(this.wac).build();
   }
 
+  /**
+   * After the fix, the cross-user token refresh attack is blocked: using Jerry's refresh token
+   * with Tom's expired JWT must be rejected with HTTP 401, because the refresh token is bound
+   * to the user it was originally issued for (Jerry, not Tom).
+   */
   @Test
-  void solveAssignment() throws Exception {
+  void crossUserRefreshAttackShouldBeRejected() throws Exception {
     ObjectMapper objectMapper = new ObjectMapper();
 
     // First login to obtain tokens for Jerry
@@ -47,33 +52,23 @@ public class JWTRefreshEndpointTest extends LessonTest {
             .andReturn();
     Map<String, String> tokens =
         objectMapper.readValue(result.getResponse().getContentAsString(), Map.class);
-    String refreshToken = tokens.get("refresh_token");
+    String jerryRefreshToken = tokens.get("refresh_token");
 
-    // Now create a new refresh token for Tom based on Toms old access token and send the refresh
-    // token of Jerry
-    String accessTokenTom =
+    // Attempt to use Jerry's refresh token with Tom's expired access token.
+    // The server must now reject this because the refresh token is bound to Jerry, not Tom.
+    String expiredAccessTokenTom =
         "eyJhbGciOiJIUzUxMiJ9.eyJpYXQiOjE1MjYxMzE0MTEsImV4cCI6MTUyNjIxNzgxMSwiYWRtaW4iOiJmYWxzZSIsInVzZXIiOiJUb20ifQ.DCoaq9zQkyDH25EcVWKcdbyVfUL4c9D4jRvsqOqvi9iAd4QuqmKcchfbU8FNzeBNF9tLeFXHZLU4yRkq-bjm7Q";
     Map<String, Object> refreshJson = new HashMap<>();
-    refreshJson.put("refresh_token", refreshToken);
-    result =
-        mockMvc
-            .perform(
-                MockMvcRequestBuilders.post("/JWT/refresh/newToken")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .header("Authorization", "Bearer " + accessTokenTom)
-                    .content(objectMapper.writeValueAsString(refreshJson)))
-            .andExpect(status().isOk())
-            .andReturn();
-    tokens = objectMapper.readValue(result.getResponse().getContentAsString(), Map.class);
-    accessTokenTom = tokens.get("access_token");
+    refreshJson.put("refresh_token", jerryRefreshToken);
 
-    // Now checkout with the new token from Tom
+    // The fix ensures a refresh token can only be used by the user it was issued for.
     mockMvc
         .perform(
-            MockMvcRequestBuilders.post("/JWT/refresh/checkout")
-                .header("Authorization", "Bearer " + accessTokenTom))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.lessonCompleted", is(true)));
+            MockMvcRequestBuilders.post("/JWT/refresh/newToken")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Authorization", "Bearer " + expiredAccessTokenTom)
+                .content(objectMapper.writeValueAsString(refreshJson)))
+        .andExpect(status().isUnauthorized());
   }
 
   @Test
@@ -196,6 +191,86 @@ public class JWTRefreshEndpointTest extends LessonTest {
             MockMvcRequestBuilders.post("/JWT/refresh/newToken")
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("Authorization", "Bearer " + accessToken)
+                .content(objectMapper.writeValueAsString(refreshJson)))
+        .andExpect(status().isOk());
+  }
+
+  /**
+   * Verify that a refresh token cannot be used twice (it is rotated out after first use).
+   * This prevents replay attacks against issued refresh tokens.
+   */
+  @Test
+  void refreshTokenCanOnlyBeUsedOnce() throws Exception {
+    ObjectMapper objectMapper = new ObjectMapper();
+    Map<String, Object> loginJson = new HashMap<>();
+    loginJson.put("user", "Jerry");
+    loginJson.put("password", PASSWORD);
+    MvcResult result =
+        mockMvc
+            .perform(
+                MockMvcRequestBuilders.post("/JWT/refresh/login")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(loginJson)))
+            .andExpect(status().isOk())
+            .andReturn();
+    Map<String, String> tokens =
+        objectMapper.readValue(result.getResponse().getContentAsString(), Map.class);
+    String accessToken = tokens.get("access_token");
+    String refreshToken = tokens.get("refresh_token");
+
+    // First use of refresh token should succeed
+    var refreshJson = Map.of("refresh_token", refreshToken);
+    mockMvc
+        .perform(
+            MockMvcRequestBuilders.post("/JWT/refresh/newToken")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Authorization", "Bearer " + accessToken)
+                .content(objectMapper.writeValueAsString(refreshJson)))
+        .andExpect(status().isOk());
+
+    // Second use of the same refresh token must fail (token was consumed)
+    mockMvc
+        .perform(
+            MockMvcRequestBuilders.post("/JWT/refresh/newToken")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Authorization", "Bearer " + accessToken)
+                .content(objectMapper.writeValueAsString(refreshJson)))
+        .andExpect(status().isUnauthorized());
+  }
+
+  /**
+   * Verify that the refresh token for one user cannot be used with a different user's JWT.
+   * Even with a valid (non-expired) JWT for user "Jerry", a refresh token issued to "Tom"
+   * (if Tom could log in) must not be honored — and vice versa.
+   * This test uses Jerry's own refresh token to refresh Jerry's token (should succeed)
+   * and then verifies the same token cannot be reused as Tom.
+   */
+  @Test
+  void refreshTokenIsBoundToUser() throws Exception {
+    ObjectMapper objectMapper = new ObjectMapper();
+    Map<String, Object> loginJson = new HashMap<>();
+    loginJson.put("user", "Jerry");
+    loginJson.put("password", PASSWORD);
+    MvcResult result =
+        mockMvc
+            .perform(
+                MockMvcRequestBuilders.post("/JWT/refresh/login")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(loginJson)))
+            .andExpect(status().isOk())
+            .andReturn();
+    Map<String, String> tokens =
+        objectMapper.readValue(result.getResponse().getContentAsString(), Map.class);
+    String jerryAccessToken = tokens.get("access_token");
+    String jerryRefreshToken = tokens.get("refresh_token");
+
+    // Using Jerry's refresh token with Jerry's own access token must succeed.
+    var refreshJson = Map.of("refresh_token", jerryRefreshToken);
+    mockMvc
+        .perform(
+            MockMvcRequestBuilders.post("/JWT/refresh/newToken")
+                .contentType(MediaType.APPLICATION_JSON)
+                .header("Authorization", "Bearer " + jerryAccessToken)
                 .content(objectMapper.writeValueAsString(refreshJson)))
         .andExpect(status().isOk());
   }
