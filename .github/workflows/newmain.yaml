@@ -1,0 +1,43 @@
+name: Checkmarx Scan
+
+on:
+  # Manual workflow execution
+  workflow_dispatch:
+
+  # Automatically run on push
+  push:
+    branches:
+      - main
+      - master
+
+  # Automatically run on pull requests
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  run_checkmarx:
+    name: Run Checkmarx One Scan
+
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    # GitHub-hosted Ubuntu runner
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout repository
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Run Checkmarx One scan
+      - name: Checkmarx One CLI Action
+        uses: checkmarx/ast-github-action@main
+        with:
+          project_name: ${{ github.event.repository.clone_url }}
+          cx_tenant: egh
+          base_uri: https://eu-2.ast.checkmarx.net
+          cx_client_id: ${{ secrets.CX_CLIENT_ID }}
+          cx_client_secret: ${{ secrets.CX_CLIENT_SECRET }}
