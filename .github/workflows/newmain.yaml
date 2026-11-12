@@ -39,5 +39,5 @@ jobs:
           project_name: ${{ github.event.repository.clone_url }}
           cx_tenant: egh
           base_uri: https://eu-2.ast.checkmarx.net
-          cx_client_id: ${{ secrets.CX_CLIENT_ID }}
-          cx_client_secret: ${{ secrets.CX_CLIENT_SECRET }}
+          cx_client_id: Cx_Github
+          cx_client_secret: xu7LCaFy59zvZI2Ri7u5ghro2aOuiySUxIrrYcF3kZHJb0VoR6gvrBgrPQWKZLRcCONrW5g20SHKGncfaHLDle
